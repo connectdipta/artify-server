@@ -32,8 +32,10 @@ async function connectDB() {
 // Test route
 app.get("/", async (req, res) => {
   await connectDB();
-  res.send("Artify API OK");
+  res.send("Artify Server API OK!");
 });
+
+// ------------------- ARTWORK ROUTES -------------------
 
 // Fetch all artworks
 app.get("/artworks", async (req, res) => {
@@ -48,11 +50,12 @@ app.post("/artworks", async (req, res) => {
   const artwork = req.body;
 
   if (!artwork.title || !artwork.imageUrl || !artwork.category) {
-    return res.status(400).json({ message: "Missing required fields" });
+    return res.status(400).json({ message: "Title, image URL, and category are required." });
   }
 
   artwork.createdAt = new Date();
   artwork.likes = 0;
+  artwork.visibility = artwork.visibility || "Public"; // default
 
   const result = await db.collection("artworks").insertOne(artwork);
   res.status(201).json({ id: result.insertedId });
@@ -90,7 +93,114 @@ app.delete("/artworks/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-// Start server
+// Like an artwork
+app.patch("/artworks/:id/like", async (req, res) => {
+  const db = await connectDB();
+  const { id } = req.params;
+
+  const result = await db.collection("artworks").updateOne(
+    { _id: new ObjectId(id) },
+    { $inc: { likes: 1 } }
+  );
+
+  if (result.matchedCount === 0) {
+    return res.status(404).json({ message: "Artwork not found" });
+  }
+
+  res.json({ message: "Liked!" });
+});
+
+// Search/filter artworks
+app.get("/artworks/search", async (req, res) => {
+  const db = await connectDB();
+  const { category, userEmail, title, userName } = req.query;
+
+  const query = {};
+  if (category) query.category = category;
+  if (userEmail) query.userEmail = userEmail;
+  if (title) query.title = { $regex: title, $options: "i" };
+  if (userName) query.userName = { $regex: userName, $options: "i" };
+
+  const artworks = await db.collection("artworks").find(query).toArray();
+  res.json(artworks);
+});
+
+// Featured artworks (latest 6 public)
+app.get("/artworks/featured", async (req, res) => {
+  const db = await connectDB();
+  const artworks = await db.collection("artworks")
+    .find({ visibility: "Public" })
+    .sort({ createdAt: -1 })
+    .limit(6)
+    .toArray();
+  res.json(artworks);
+});
+
+// Explore public artworks
+app.get("/artworks/explore", async (req, res) => {
+  const db = await connectDB();
+  const artworks = await db.collection("artworks")
+    .find({ visibility: "Public" })
+    .toArray();
+  res.json(artworks);
+});
+
+// ------------------- FAVORITES ROUTES -------------------
+
+// Add to favorites
+app.post("/favorites", async (req, res) => {
+  const db = await connectDB();
+  const { artworkId, userEmail } = req.body;
+
+  if (!artworkId || !userEmail) {
+    return res.status(400).json({ message: "Artwork ID and user email are required." });
+  }
+
+  const result = await db.collection("favorites").insertOne({
+    artworkId: new ObjectId(artworkId),
+    userEmail,
+    addedAt: new Date()
+  });
+
+  res.status(201).json({ id: result.insertedId });
+});
+
+// Get favorites for a user
+app.get("/favorites", async (req, res) => {
+  const db = await connectDB();
+  const { userEmail } = req.query;
+
+  const favorites = await db.collection("favorites").aggregate([
+    { $match: { userEmail } },
+    {
+      $lookup: {
+        from: "artworks",
+        localField: "artworkId",
+        foreignField: "_id",
+        as: "artwork"
+      }
+    },
+    { $unwind: "$artwork" }
+  ]).toArray();
+
+  res.json(favorites);
+});
+
+// Remove from favorites
+app.delete("/favorites/:id", async (req, res) => {
+  const db = await connectDB();
+  const { id } = req.params;
+
+  const result = await db.collection("favorites").deleteOne({ _id: new ObjectId(id) });
+
+  if (result.deletedCount === 0) {
+    return res.status(404).json({ message: "Favorite not found" });
+  }
+
+  res.json({ ok: true });
+});
+
+// ------------------- SERVER START -------------------
 app.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
 });
