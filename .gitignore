@@ -1,0 +1,4 @@
+node_modules
+.env
+artify-d5f89-firebase-adminsdk-fbsvc-b2d8b97ab2.json
+serviceAccountKey.json
