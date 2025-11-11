@@ -7,11 +7,16 @@ const admin = require("firebase-admin");
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ------------------- MIDDLEWARE -------------------
-app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+/* ------------------- MIDDLEWARE ------------------- */
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    credentials: true,
+  })
+);
 app.use(express.json());
 
-// ------------------- FIREBASE ADMIN -------------------
+/* ------------------- FIREBASE ADMIN ------------------- */
 let firebaseAppInitialized = false;
 
 try {
@@ -65,7 +70,7 @@ const verifyFirebaseToken = async (req, res, next) => {
   }
 };
 
-// ------------------- MONGODB SETUP -------------------
+/* ------------------- MONGODB SETUP ------------------- */
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -78,13 +83,13 @@ let db;
 async function connectDB() {
   if (!db) {
     await client.connect();
-    db = client.db(); // uses db name from URI (artify)
+    db = client.db(); // uses db name from URI (e.g., artify)
     console.log("✅ Connected to MongoDB Atlas");
   }
   return db;
 }
 
-// ------------------- ROUTES -------------------
+/* ------------------- ROUTES ------------------- */
 
 // Health check
 app.get("/", async (req, res, next) => {
@@ -96,13 +101,76 @@ app.get("/", async (req, res, next) => {
   }
 });
 
-// -------- ARTWORKS --------
+/* -------- ARTWORKS (STATIC ROUTES FIRST) -------- */
 
 // Get all artworks (public)
 app.get("/artworks", async (req, res, next) => {
   try {
     const db = await connectDB();
     const artworks = await db.collection("artworks").find().toArray();
+    res.json(artworks);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Featured artworks: latest 6 public (STATIC — must be before /artworks/:id)
+app.get("/artworks/featured", async (req, res) => {
+  try {
+    const db = await connectDB();
+    const artworks = await db.collection("artworks")
+      .find({ visibility: "Public" })
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .toArray();
+
+    res.json(artworks);
+  } catch (err) {
+    console.error("Error in /artworks/featured:", err);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// Search/filter artworks (public) (STATIC)
+app.get("/artworks/search", async (req, res, next) => {
+  try {
+    const db = await connectDB();
+    const { category, userEmail, title, userName } = req.query;
+
+    const query = {};
+    if (category) query.category = category;
+    if (userEmail) query.userEmail = userEmail;
+    if (title) query.title = { $regex: title, $options: "i" };
+    if (userName) query.userName = { $regex: userName, $options: "i" };
+
+    const artworks = await db.collection("artworks").find(query).toArray();
+    res.json(artworks);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Explore public artworks (STATIC)
+app.get("/artworks/explore", async (req, res, next) => {
+  try {
+    const db = await connectDB();
+    const artworks = await db.collection("artworks")
+      .find({ visibility: "Public" })
+      .toArray();
+    res.json(artworks);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get artworks by user email (STATIC)
+app.get("/artworks/user/:email", async (req, res, next) => {
+  try {
+    const db = await connectDB();
+    const { email } = req.params;
+    const artworks = await db.collection("artworks")
+      .find({ userEmail: email })
+      .toArray();
     res.json(artworks);
   } catch (err) {
     next(err);
@@ -132,11 +200,31 @@ app.post("/artworks", verifyFirebaseToken, async (req, res, next) => {
   }
 });
 
-// Update artwork (private, owner-only)
-app.put("/artworks/:id", verifyFirebaseToken, async (req, res, next) => {
+/* -------- ARTWORKS (DYNAMIC :id ROUTES AFTER STATIC) -------- */
+
+// Get single artwork by ID
+app.get("/artworks/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ message: "Invalid artwork ID" });
+  }
   try {
     const db = await connectDB();
-    const { id } = req.params;
+    const artwork = await db.collection("artworks").findOne({ _id: new ObjectId(id) });
+    if (!artwork) return res.status(404).json({ message: "Artwork not found" });
+    res.json(artwork);
+  } catch (err) {
+    console.error("Error fetching artwork:", err);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+// Update artwork (private, owner-only)
+app.put("/artworks/:id", verifyFirebaseToken, async (req, res, next) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid artwork ID" });
+  try {
+    const db = await connectDB();
     const update = req.body;
 
     const result = await db.collection("artworks").updateOne(
@@ -156,9 +244,10 @@ app.put("/artworks/:id", verifyFirebaseToken, async (req, res, next) => {
 
 // Delete artwork (private, owner-only)
 app.delete("/artworks/:id", verifyFirebaseToken, async (req, res, next) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid artwork ID" });
   try {
     const db = await connectDB();
-    const { id } = req.params;
 
     const result = await db.collection("artworks").deleteOne({
       _id: new ObjectId(id),
@@ -174,27 +263,13 @@ app.delete("/artworks/:id", verifyFirebaseToken, async (req, res, next) => {
     next(err);
   }
 });
- 
-// get artwork by user email
- app.get("/artworks/user/:email", async (req, res, next) => {
-  try {
-    const db = await connectDB();
-    const { email } = req.params;
-    const artworks = await db.collection("artworks")
-      .find({ userEmail: email })
-      .toArray();
-    res.json(artworks);
-  } catch (err) {
-    next(err);
-  }
-});
 
 // Like an artwork (public)
 app.patch("/artworks/:id/like", async (req, res, next) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid artwork ID" });
   try {
     const db = await connectDB();
-    const { id } = req.params;
-
     const result = await db.collection("artworks").updateOne(
       { _id: new ObjectId(id) },
       { $inc: { likes: 1 } }
@@ -210,78 +285,17 @@ app.patch("/artworks/:id/like", async (req, res, next) => {
   }
 });
 
-// Search/filter artworks (public)
-app.get("/artworks/search", async (req, res, next) => {
-  try {
-    const db = await connectDB();
-    const { category, userEmail, title, userName } = req.query;
-
-    const query = {};
-    if (category) query.category = category;
-    if (userEmail) query.userEmail = userEmail;
-    if (title) query.title = { $regex: title, $options: "i" };
-    if (userName) query.userName = { $regex: userName, $options: "i" };
-
-    const artworks = await db.collection("artworks").find(query).toArray();
-    res.json(artworks);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Featured artworks: latest 6 public
-app.get("/artworks/featured", async (req, res, next) => {
-  try {
-    const db = await connectDB();
-    const artworks = await db.collection("artworks")
-      .find({ visibility: "Public" })
-      .sort({ createdAt: -1 })
-      .limit(6)
-      .toArray();
-    res.json(artworks);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Explore public artworks
-app.get("/artworks/explore", async (req, res, next) => {
-  try {
-    const db = await connectDB();
-    const artworks = await db.collection("artworks")
-      .find({ visibility: "Public" })
-      .toArray();
-    res.json(artworks);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// My Gallery (private): artworks by logged-in user
-app.get("/my-gallery", verifyFirebaseToken, async (req, res, next) => {
-  try {
-    const db = await connectDB();
-    const artworks = await db.collection("artworks")
-      .find({ userEmail: req.user.email })
-      .toArray();
-    res.json(artworks);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// -------- FAVORITES --------
+/* -------- FAVORITES -------- */
 
 // Add to favorites (private)
 app.post("/favorites", verifyFirebaseToken, async (req, res, next) => {
+  const { artworkId } = req.body;
+  if (!artworkId || !ObjectId.isValid(artworkId)) {
+    return res.status(400).json({ message: "Valid artwork ID is required." });
+  }
+
   try {
     const db = await connectDB();
-    const { artworkId } = req.body;
-
-    if (!artworkId) {
-      return res.status(400).json({ message: "Artwork ID is required." });
-    }
-
     const result = await db.collection("favorites").insertOne({
       artworkId: new ObjectId(artworkId),
       userEmail: req.user.email,
@@ -319,10 +333,11 @@ app.get("/favorites", verifyFirebaseToken, async (req, res, next) => {
 
 // Remove favorite (private, owner-only)
 app.delete("/favorites/:id", verifyFirebaseToken, async (req, res, next) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid favorite ID" });
+
   try {
     const db = await connectDB();
-    const { id } = req.params;
-
     const result = await db.collection("favorites").deleteOne({
       _id: new ObjectId(id),
       userEmail: req.user.email,
@@ -338,7 +353,7 @@ app.delete("/favorites/:id", verifyFirebaseToken, async (req, res, next) => {
   }
 });
 
-// -------- OPTIONAL EXTRAS --------
+/* -------- OPTIONAL EXTRAS -------- */
 
 // Top artists of the week (public): by total public artworks
 app.get("/top-artists", async (req, res, next) => {
@@ -371,13 +386,13 @@ app.get("/community-highlights", async (req, res, next) => {
   }
 });
 
-// ------------------- ERROR HANDLER -------------------
+/* ------------------- ERROR HANDLER ------------------- */
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ message: "Internal Server Error" });
 });
 
-// ------------------- SERVER START -------------------
+/* ------------------- SERVER START ------------------- */
 app.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
 });
