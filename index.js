@@ -174,6 +174,20 @@ app.delete("/artworks/:id", verifyFirebaseToken, async (req, res, next) => {
     next(err);
   }
 });
+ 
+// get artwork by user email
+ app.get("/artworks/user/:email", async (req, res, next) => {
+  try {
+    const db = await connectDB();
+    const { email } = req.params;
+    const artworks = await db.collection("artworks")
+      .find({ userEmail: email })
+      .toArray();
+    res.json(artworks);
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Like an artwork (public)
 app.patch("/artworks/:id/like", async (req, res, next) => {
