@@ -2,7 +2,7 @@
 
 [cite_start]This repository contains the server-side code for **Artify**[cite: 4], a creative artwork showcase platform. This Node.js & Express server provides a secure RESTful API to manage artworks, user authentication, likes, and favorites.
 
-- **Live Site URL:** `[Your Live Server URL (e.g., from Vercel)]`
+- **Live Site URL:** `https://artify-server-five.vercel.app/`
 - **Client-Side Repository:** `https://github.com/connectdipta/artify-client`
 
 ## Project Features
