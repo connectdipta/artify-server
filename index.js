@@ -131,18 +131,28 @@ app.get("/artworks/featured", async (req, res) => {
   }
 });
 
-// Search/filter artworks (public) (STATIC)
+
+// Search/filter artworks (public)
 app.get("/artworks/search", async (req, res, next) => {
   try {
     const db = await connectDB();
-    const { category, userEmail, title, userName } = req.query;
+    const { category, title, userName } = req.query;
+    const query = { visibility: "Public" };
 
-    const query = {};
-    if (category) query.category = category;
-    if (userEmail) query.userEmail = userEmail;
-    if (title) query.title = { $regex: title, $options: "i" };
-    if (userName) query.userName = { $regex: userName, $options: "i" };
+    if (category) {
+      query.category = category;
+    }
 
+    if (title || userName) {
+      query.$or = [];
+      if (title) {
+        query.$or.push({ title: { $regex: title, $options: "i" } });
+      }
+      if (userName) {
+        query.$or.push({ userName: { $regex: userName, $options: "i" } });
+      }
+    }
+    
     const artworks = await db.collection("artworks").find(query).toArray();
     res.json(artworks);
   } catch (err) {
@@ -192,6 +202,7 @@ app.post("/artworks", verifyFirebaseToken, async (req, res, next) => {
     artwork.createdAt = new Date();
     artwork.likes = 0;
     artwork.visibility = artwork.visibility || "Public";
+    artwork.userPhotoURL = req.user.picture || null;
 
     const result = await db.collection("artworks").insertOne(artwork);
     res.status(201).json({ id: result.insertedId });
